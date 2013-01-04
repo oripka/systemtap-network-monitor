@@ -1,0 +1,188 @@
+#!/usr/bin/python
+import sys
+import subprocess
+import pwd
+import os
+import commands
+import GeoIP
+import re
+import urllib2
+from dns import resolver,reversename
+from colorama import Fore, Back, Style, init
+
+# init colorama
+init()
+
+class Tag:
+	def __init__(self, type, id, tag):
+		self.id = id
+		self.tag = tag
+		self.type = type
+	
+
+	def getTag(self, type, oid):
+
+		if(self.id == oid):
+			return self.tag
+		else:
+			return None
+
+	def idContainsRev(self,type,oid):
+		if oid != "" and self.id in oid:
+			return self.tag
+		else:
+			return None
+
+	def idContains(self,type,oid):
+		if oid != "" and oid in self.id:
+			return self.tag
+		else:
+			return None
+
+	def toS(self):
+		return "Type: "+self.type+", ID: "+self.id+", Tag: "+self.tag
+
+def readintags():
+	try:
+		f = open('tags')
+
+		for line in f:
+			split = line.split(';')
+			tags.append(Tag(split[0], split[1], split[2].rstrip()))
+
+		f.close()
+	except:
+		print "No tags file found"
+
+def gettags(rip, execn, whois):
+	tag = ""
+	for t in tags:
+		#print "Comparing tag "+t.toS() + " to rip: "+rip+", execn: "+execn+", whois: "+whois
+
+		trip = t.getTag("ip",rip)
+		trproc = t.getTag("proc",execn)
+		trwhois = t.idContainsRev("whois",whois)
+		sub = t.idContainsRev("sub",rip)
+
+		if trip != None and trproc != None:
+			tag = trip+","+trproc
+		elif trip != None:
+			tag = trip
+		elif trproc != None:
+			tag = trproc
+		elif sub != None:
+			tag = sub
+
+		if trwhois != None:
+			tag = trwhois
+	return tag
+
+def geoinfo(rip):
+	country = ""
+	city = ""
+	info = gi.record_by_addr(rip)
+	if info and info['country_name'] and info['city']:
+		country = info['country_name']
+		city = info['city']
+	return country, city
+
+def isLocal(rip):
+	if (rip.startswith("192.168.") or rip.startswith("172.16.") or
+			rip.startswith("10.") or rip.startswith("127.0")):
+		return True
+	return False
+
+def whoislookup(rip):
+	netname = ""
+	asnum = ""
+	if (isLocal(rip)):
+		netname="LOCAL"
+		asnum = "-"
+	else:
+		wqry="whois "+rip
+		# get last netname of the output
+		whois = commands.getoutput(wqry)
+		
+		m = re.search('netname: (.*)', whois)
+		if m:
+			netname = m.group(1).rstrip().lstrip()
+		m = re.search('origin: (.*)', whois)
+		if m :
+			asnum = m.group(1).rstrip().lstrip()
+		else:
+			asnum = "-"
+	return netname, asnum
+
+
+def googlesafebrowsing(rip, rhost):
+	badware_dict = {"malware": "M","black": "B"}
+	url = ""
+	base = "http://safebrowsing.clients.google.com/safebrowsing/api/lookup?client=api&client=api&appver=1.0&pver=3.0&apikey="
+	key = "ABQIAAAANpv5aLURH10kjq2JnuiMPxQyhBczf7JjdWk_Cfs7UVWHLjopzA"
+	url += base
+	url +=key
+	url += "&url=http%3A%2F%2F"
+	url += rhost
+
+	answer = urllib2.urlopen(url)
+
+        url_hashes_data = answer.readlines()
+	if not url_hashes_data:
+		return ""
+	return url_hashes_data[0]
+
+safebrowsingips = ["209.85.148.139","209.85.148.138","209.85.148.100","209.85.148.102","209.85.148.113","209.85.148.101"]
+safebrowsingips +=["173.194.70.100","173.194.70.101","173.194.70.102","173.194.70.113","173.194.70.138","173.194.70.139"]
+tags = []
+readintags()
+gi = GeoIP.open("GeoLiteCity.dat",GeoIP.GEOIP_STANDARD)
+p = subprocess.Popen(['stap', 'netfilter-send.stp'], stdout = subprocess.PIPE)
+
+##print "%-8s %10s %25s %18s %5s %12s %10s %12s %15s [%s]" % ("username", "execn", "rhost", "rip", "rport", "netname", "asnum", "country", "city", "tag")
+
+while True:
+	str = p.stdout.readline().rstrip()
+	splitted = str.split(';')
+	pid = splitted[0]
+	uid = splitted[1]
+	lip = splitted[2]
+	lport = splitted[3]
+	rip = splitted[4]
+	rport = splitted[5]
+	execn = splitted[6]
+	username = pwd.getpwuid(int(uid))[0]
+
+	if (rport=="43" or execn == "whois" or rip == "127.0.0.1"):
+		continue
+
+	if (rip in safebrowsingips):
+		continue
+
+	addr=reversename.from_address(rip)
+	try:
+		rhost=resolver.query(addr,"PTR").__iter__().next().to_text()
+		rhost=rhost.rstrip('.')
+	except:
+		rhost=rip
+
+#	netname, asnum = whoislookup(rip)
+	netname = ""
+	asnum = ""
+	tag = gettags(rip, execn, netname)
+	country, city = geoinfo(rip)
+#	if not isLocal(rip):
+#		sb=googlesafebrowsing(rip, rhost)
+#	else:
+	sb = ""
+	
+#	formatted = "%-10s %10s %30s %22s %5s %14s %10s %12s %15s [%s,%s]" % (username, execn, rhost, rip, rport, netname, asnum, country, city, tag, sb)
+	formatted = "%-8s %10s %25s %18s %5s %20s %10s %10s %15s [%s]" % (username, execn, rhost, rip, rport, netname, asnum, country, city, tag)
+
+	if tag == "":
+		print Fore.RED + formatted + Style.RESET_ALL
+	else:
+		print formatted
+
+
+	sys.stdout.flush()
+

@@ -1,0 +1,10 @@
+
+probe netfilter.ip.local_out {
+	if(syn == 1){
+		printf("%d;%d;%s;%d;%s;%d;%s\n", 
+			pid(), uid(),
+			saddr, sport,
+			daddr, dport, execname()
+			)
+	}
+}

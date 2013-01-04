@@ -1,0 +1,9 @@
+ip;8.8.8.8;google-dns
+ip;192.168.101.20;ok
+ip;127.0.0.1;ok
+ip;192.168.10.15;ok
+sub;216.239.32;google
+proc;privoxy;browser
+proc;cifsd;samba
+proc;vmnet-natd;vmware-nat
+whois;AMAZON;bigdata
